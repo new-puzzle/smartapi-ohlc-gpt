@@ -1,5 +1,5 @@
-smartapi-python
+smartapi-python-v2
 fastapi
 uvicorn
-
 requests
+pyotp
