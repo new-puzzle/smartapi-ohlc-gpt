@@ -1,4 +1,4 @@
-smartapi-python-v2
+smartapi-python
 fastapi
 uvicorn
 requests
