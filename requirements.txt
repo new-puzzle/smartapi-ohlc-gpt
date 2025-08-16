@@ -4,3 +4,4 @@ uvicorn
 requests
 pyotp
 logzero
+websocket-client
