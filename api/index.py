@@ -5,11 +5,11 @@ import requests
 import json
 from datetime import datetime, timedelta
 import pyotp
-import logzero # Make sure this import is here
+import logzero
 
-# --- THE FIX ---
-logzero.logfile(None)
-# ---------------
+# --- THE FINAL WORKAROUND ---
+logzero.logfile("/tmp/smartapi.log")
+# ----------------------------
 
 app = FastAPI()
 
