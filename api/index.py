@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from smartapi import SmartConnect
+from SmartApi import SmartConnect
 import os
 import requests
 import json
