@@ -5,21 +5,19 @@ import requests
 import json
 from datetime import datetime, timedelta
 import pyotp
-import logzero
 
-# --- THE FINAL WORKAROUND ---
-logzero.logfile("/tmp/smartapi.log")
-# ----------------------------
+# --- THE DIRECTORY TRICK ---
+# Change the current working directory to the only writable one
+os.chdir("/tmp")
+# --------------------------
 
 app = FastAPI()
 
-
-# --- Environment Variables (to be set in Vercel) ---
+# --- Environment Variables ---
 API_KEY = os.environ.get("ANGEL_API_KEY")
 API_SECRET = os.environ.get("ANGEL_API_SECRET")
 ANGEL_USERNAME = os.environ.get("ANGEL_USERNAME")
 ANGEL_PASSWORD = os.environ.get("ANGEL_PASSWORD")
-# --- THIS IS THE NEW, PERMANENT SECRET KEY ---
 ANGEL_TOTP_SECRET = os.environ.get("ANGEL_TOTP_SECRET")
 
 INSTRUMENT_LIST_PATH = "/tmp/instrument_list.json"
@@ -54,15 +52,14 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         raise HTTPException(status_code=500, detail="Server configuration error: Missing one or more API credentials in Vercel settings.")
 
     try:
-        # --- GENERATE TOTP AUTOMATICALLY ---
         totp = pyotp.TOTP(ANGEL_TOTP_SECRET)
         current_totp = totp.now()
-        # ------------------------------------
-
+            
         symbol_token = get_token_from_symbol(stock_symbol, exchange)
+            
+        # This will now create its 'logs' folder inside /tmp, which is allowed
         smart_api = SmartConnect(api_key=API_KEY)
             
-        # --- Use the generated TOTP for login ---
         session_data = smart_api.generateSession(ANGEL_USERNAME, ANGEL_PASSWORD, current_totp)
             
         if not session_data or session_data.get("status") is False:
@@ -92,3 +89,4 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
