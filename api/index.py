@@ -4,9 +4,15 @@ import os
 import requests
 import json
 from datetime import datetime, timedelta
-import pyotp # <-- IMPORT THE NEW LIBRARY
+import pyotp
+import logzero # Make sure this import is here
+
+# --- THE FIX ---
+logzero.logfile(None)
+# ---------------
 
 app = FastAPI()
+
 
 # --- Environment Variables (to be set in Vercel) ---
 API_KEY = os.environ.get("ANGEL_API_KEY")
