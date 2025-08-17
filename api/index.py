@@ -48,13 +48,7 @@ def get_token_from_symbol(symbol: str, exchange: str = "NSE"):
 
 @app.get("/api/get-ohlc")
 def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
-    # --- DEBUGGING START ---
-    print(f"ANGEL_API_KEY: {'present' if os.environ.get('ANGEL_API_KEY') else 'missing'}")
-    print(f"ANGEL_API_SECRET: {'present' if os.environ.get('ANGEL_API_SECRET') else 'missing'}")
-    print(f"ANGEL_USERNAME: {'present' if os.environ.get('ANGEL_USERNAME') else 'missing'}")
-    print(f"ANGEL_MPIN: {'present' if os.environ.get('ANGEL_MPIN') else 'missing'}")
-    print(f"ANGEL_TOTP_SECRET: {'present' if os.environ.get('ANGEL_TOTP_SECRET') else 'missing'}")
-    # --- DEBUGGING END ---
+    
     if not all([API_KEY, API_SECRET, ANGEL_USERNAME, ANGEL_MPIN, ANGEL_TOTP_SECRET]):
         raise HTTPException(status_code=500, detail="Server configuration error: Missing one or more API credentials in Vercel settings.")
 
@@ -96,10 +90,5 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         # Re-raise HTTPException directly as they are expected errors
         raise e
     except Exception as e:
-        # Log the full traceback for unexpected errors
-        import traceback
-        print("--- UNEXPECTED ERROR TRACEBACK ---")
-        traceback.print_exc() # This will print the traceback to stderr/logs
-        print("--- END UNEXPECTED ERROR TRACEBACK ---")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
