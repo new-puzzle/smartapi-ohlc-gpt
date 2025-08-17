@@ -17,7 +17,7 @@ app = FastAPI()
 API_KEY = os.environ.get("ANGEL_API_KEY")
 API_SECRET = os.environ.get("ANGEL_API_SECRET")
 ANGEL_USERNAME = os.environ.get("ANGEL_USERNAME")
-ANGEL_PASSWORD = os.environ.get("ANGEL_PASSWORD")
+ANGEL_MPIN = os.environ.get("ANGEL_MPIN")
 ANGEL_TOTP_SECRET = os.environ.get("ANGEL_TOTP_SECRET")
 
 INSTRUMENT_LIST_PATH = "/tmp/instrument_list.json"
