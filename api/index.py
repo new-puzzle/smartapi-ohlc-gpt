@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends
 from SmartApi import SmartConnect
 import os
 import requests
@@ -19,6 +19,17 @@ API_SECRET = os.environ.get("ANGEL_API_SECRET")
 ANGEL_USERNAME = os.environ.get("ANGEL_USERNAME")
 ANGEL_MPIN = os.environ.get("ANGEL_MPIN")
 ANGEL_TOTP_SECRET = os.environ.get("ANGEL_TOTP_SECRET")
+CUSTOM_GPT_API_KEY = os.environ.get("CUSTOM_GPT_API_KEY")
+
+# --- API Key Authentication Dependency ---
+async def verify_api_key(x_api_key: str = Header(...)):
+    if not CUSTOM_GPT_API_KEY:
+        raise HTTPException(status_code=500, detail="Server configuration error: CUSTOM_GPT_API_KEY not set.")
+    if x_api_key != CUSTOM_GPT_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+    return x_api_key
+# --- END API Key Authentication Dependency ---
+CUSTOM_GPT_API_KEY = os.environ.get("CUSTOM_GPT_API_KEY")
 
 INSTRUMENT_LIST_PATH = "/tmp/instrument_list.json"
 
@@ -46,7 +57,7 @@ def get_token_from_symbol(symbol: str, exchange: str = "NSE"):
             return instrument.get("token")
     raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not found on exchange '{exchange}'.")
 
-@app.get("/api/get-ohlc")
+@app.get("/api/get-ohlc", dependencies=[Depends(verify_api_key)])
 def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
     
     if not all([API_KEY, API_SECRET, ANGEL_USERNAME, ANGEL_MPIN, ANGEL_TOTP_SECRET]):
