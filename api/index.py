@@ -93,7 +93,13 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         return {"status": "success", "symbol": stock_symbol, "data": ohlc_data.get("data")}
 
     except HTTPException as e:
+        # Re-raise HTTPException directly as they are expected errors
         raise e
     except Exception as e:
+        # Log the full traceback for unexpected errors
+        import traceback
+        print("--- UNEXPECTED ERROR TRACEBACK ---")
+        traceback.print_exc() # This will print the traceback to stderr/logs
+        print("--- END UNEXPECTED ERROR TRACEBACK ---")
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
