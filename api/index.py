@@ -60,7 +60,7 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         # This will now create its 'logs' folder inside /tmp, which is allowed
         smart_api = SmartConnect(api_key=API_KEY)
             
-        session_data = smart_api.generateSession(ANGEL_USERNAME, ANGEL_PASSWORD, current_totp)
+        session_data = smart_api.generateSession(ANGEL_USERNAME, ANGEL_MPIN, current_totp)
             
         if not session_data or session_data.get("status") is False:
             error_message = session_data.get("message", "Unknown error during session generation.")
