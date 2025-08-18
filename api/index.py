@@ -16,7 +16,18 @@ log = logging.getLogger(__name__)
 # --- Directory Trick ---
 os.chdir("/tmp")
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI()
+
+# Allow requests from the ChatGPT UI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://chat.openai.com"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- Environment Variables ---
 API_KEY = os.environ.get("ANGEL_API_KEY")
