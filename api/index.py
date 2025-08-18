@@ -24,7 +24,7 @@ API_SECRET = os.environ.get("ANGEL_API_SECRET")
 ANGEL_USERNAME = os.environ.get("ANGEL_USERNAME")
 ANGEL_MPIN = os.environ.get("ANGEL_MPIN")
 ANGEL_TOTP_SECRET = os.environ.get("ANGEL_TOTP_SECRET")
-CUSTOM_GPT_API_KEY = os.environ.get("CUSTOM_GPT_API_KEY")
+
 
 INSTRUMENT_LIST_PATH = "/tmp/instrument_list.json"
 
