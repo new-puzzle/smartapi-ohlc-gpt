@@ -1,0 +1,72 @@
+openapi: 3.1.0
+info:
+  title: SmartAPI OHLC Data Fetcher
+  version: 1.0.0
+  description: API for fetching OHLC (Open-High-Low-Close) stock data using Angel Broking SmartAPI.
+servers:
+  - url: https://smartapi-ohlc-6qlehrkfs-krishnas-projects-cbc3f03b.vercel.app
+paths:
+  /api/get-ohlc:
+    get:
+      operationId: getOhlcData
+      summary: Get OHLC data for a stock symbol
+      parameters:
+        - name: stock_symbol
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The stock symbol (e.g., "SBIN", "RELIANCE").
+        - name: exchange
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "NSE"
+          description: The exchange (e.g., "NSE", "BSE"). Defaults to "NSE".
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 30
+            format: int32
+          description: Number of past days for which to fetch data. Defaults to 30.
+      responses:
+        '200':
+          description: Successfully retrieved OHLC data.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  symbol:
+                    type: string
+                    example: "SBIN"
+                  data:
+                    type: array
+                    items:
+                      type: array
+                      items:
+                        type:
+                          - string
+                          - number
+                      minItems: 6
+                      maxItems: 6
+                    description: Array of OHLC data points (timestamp, open, high, low, close, volume).
+        '400':
+          description: Bad request, e.g., failed to fetch OHLC data.
+        '401':
+          description: Authentication failed.
+        '404':
+          description: Symbol not found.
+        '500':
+          description: Internal server error.
+        '503':
+          description: Service unavailable, e.g., could not download instrument list.
+      
+components:
+  schemas: {}
