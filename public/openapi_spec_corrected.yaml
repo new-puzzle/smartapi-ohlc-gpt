@@ -4,7 +4,8 @@ info:
   version: 1.0.0
   description: API for fetching OHLC (Open-High-Low-Close) stock data using Angel Broking SmartAPI.
 servers:
-  - url: https://smartapi-ohlc-6qlehrkfs-krishnas-projects-cbc3f03b.vercel.app
+  - url: https://smartapi-ohlc-gpt.vercel.app
+
 paths:
   /api/get-ohlc:
     get:
