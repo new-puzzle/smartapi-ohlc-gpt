@@ -59,6 +59,7 @@ def get_token_from_symbol(symbol: str, exchange: str = "NSE"):
 
 @app.get("/api/get-ohlc")
 def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
+    print(f"[DEBUG] get_ohlc_data called for {stock_symbol}")
     
     if not all([API_KEY, API_SECRET, ANGEL_USERNAME, ANGEL_MPIN, ANGEL_TOTP_SECRET]):
         raise HTTPException(status_code=500, detail="Server configuration error: Missing one or more API credentials in Vercel settings.")
