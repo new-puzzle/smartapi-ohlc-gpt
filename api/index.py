@@ -46,7 +46,7 @@ def get_instrument_list():
         with open(INSTRUMENT_LIST_PATH, 'r') as f:
             return json.load(f)
         
-    url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+    url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaste.json"
     try:
         response = requests.get(url)
         response.raise_for_status()
