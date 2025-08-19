@@ -258,3 +258,4 @@ def run_momentum_scan(symbols: str, exchange: str = "NSE"):
     scan_results = calculate_momentum_scan(all_ohlc_data)
     
     return {"status": "success", "scan_type": "momentum", "results": scan_results}
+ # ... rest of your code
