@@ -37,10 +37,6 @@ ANGEL_USERNAME = os.environ.get("ANGEL_USERNAME")
 ANGEL_MPIN = os.environ.get("ANGEL_MPIN")
 ANGEL_TOTP_SECRET = os.environ.get("ANGEL_TOTP_SECRET")
 
-<<<<<<< HEAD
-=======
-
->>>>>>> 099dc7d842597c767f05c81be2bda980952b5973
 INSTRUMENT_LIST_PATH = "/tmp/instrument_list.json"
 
 def get_instrument_list():
@@ -60,7 +56,6 @@ def get_instrument_list():
         return {"status": "error", "error": f"Could not download instrument list: {e}"}
 
 def get_token_from_symbol(symbol: str, exchange: str = "NSE"):
-<<<<<<< HEAD
     instrument_list = get_instrument_list()
     search_symbol = f"{symbol.upper()}-EQ"
     for instrument in instrument_list:
@@ -71,7 +66,6 @@ def get_token_from_symbol(symbol: str, exchange: str = "NSE"):
 def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int = 30):
     if not all([API_KEY, API_SECRET, ANGEL_USERNAME, ANGEL_MPIN, ANGEL_TOTP_SECRET]):
         raise HTTPException(status_code=500, detail="Server configuration error: Missing one or more Angel Broking API credentials.")
-=======
     try:
         instrument_list = get_instrument_list()
         search_symbol = f"{symbol.upper()}-EQ"
@@ -90,12 +84,10 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
     
     if not all([API_KEY, API_SECRET, ANGEL_USERNAME, ANGEL_MPIN, ANGEL_TOTP_SECRET]):
         return {"status": "error", "error": "Missing Angel Broking API credentials in environment variables."}
->>>>>>> 099dc7d842597c767f05c81be2bda980952b5973
 
     try:
         # Generate TOTP
         totp = pyotp.TOTP(ANGEL_TOTP_SECRET).now()
-<<<<<<< HEAD
         symbol_token = get_token_from_symbol(stock_symbol, exchange)
         smart_api = SmartConnect(api_key=API_KEY)
         session_data = smart_api.generateSession(ANGEL_USERNAME, ANGEL_MPIN, totp)
@@ -103,7 +95,6 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         if not session_data or session_data.get("status") is False:
             error_message = session_data.get("message", "Unknown error")
             raise HTTPException(status_code=401, detail=f"Authentication Failed: {error_message}")
-=======
         log.debug("TOTP generated.")
 
         # Symbol token
@@ -120,15 +111,11 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         if not session_data or session_data.get("status") is False:
             error_message = session_data.get("message", "Unknown error during session generation.")
             return {"status": "error", "error": f"Authentication Failed: {error_message}"}
->>>>>>> 099dc7d842597c767f05c81be2bda980952b5973
 
         # Fetch OHLC
         to_date = datetime.now()
         from_date = to_date - timedelta(days=days)
-<<<<<<< HEAD
-        
-=======
->>>>>>> 099dc7d842597c767f05c81be2bda980952b5973
+
         historic_params = {
             "exchange": exchange,
             "symboltoken": symbol_token,
@@ -138,19 +125,16 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         }
 
         ohlc_data = smart_api.getCandleData(historic_params)
-<<<<<<< HEAD
         smart_api.terminateSession(ANGEL_USERNAME)
 
         if ohlc_data.get("status") is False:
              raise HTTPException(status_code=400, detail=f"Failed to fetch OHLC data: {ohlc_data.get('message')}")
-=======
         log.debug(f"getCandleData status: {ohlc_data.get('status')}")
         smart_api.terminateSession(ANGEL_USERNAME)
         log.debug("Session terminated.")
 
         if ohlc_data.get("status") is False:
             return {"status": "error", "error": f"Failed to fetch OHLC: {ohlc_data.get('message')}"}
->>>>>>> 099dc7d842597c767f05c81be2bda980952b5973
 
         return ohlc_data.get("data")
 
@@ -251,7 +235,6 @@ def run_strategy_scan(stock_symbol: str, strategy: str, exchange: str = "NSE"):
         return {"status": "success", "symbol": stock_symbol, "strategy": strategy, "result": result}
 
     except HTTPException as e:
-<<<<<<< HEAD
         raise e
     except Exception as e:
         import traceback
@@ -283,11 +266,10 @@ def run_momentum_scan(symbols: str, exchange: str = "NSE"):
     
     return {"status": "success", "scan_type": "momentum", "results": scan_results}
 
-=======
         log.error(f"HTTPException: {e.detail}")
         return {"status": "error", "error": e.detail}
     except Exception as e:
         tb = traceback.format_exc()
         log.critical(f"Unexpected error: {str(e)}\n{tb}")
         return {"status": "error", "error": str(e), "traceback": tb}
->>>>>>> 099dc7d842597c767f05c81be2bda980952b5973
+
