@@ -92,29 +92,49 @@ def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int =
             log.error(f"Authentication Failed: {error_message}")
             raise HTTPException(status_code=401, detail=f"Authentication Failed: {error_message}")
 
-        to_date = datetime.now()
-        from_date = to_date - timedelta(days=days)
+        all_ohlc_data = []
+        current_to_date = datetime.now()
         
-        # Corrected date format for Angel Broking API
-        historic_params = {
-            "exchange": exchange,
-            "symboltoken": symbol_token,
-            "interval": "ONE_DAY",
-            "fromdate": from_date.strftime("%Y-%m-%d %H:%M"), # Reverted to original format
-            "todate": to_date.strftime("%Y-%m-%d %H:%M")     # Reverted to original format
-        }
-        log.info(f"Sending historic_params to getCandleData: {historic_params}")
+        # Fetch data in chunks to overcome the 170-day limit
+        # The Angel Broking API seems to return max ~170 days per call for ONE_DAY interval
+        # We will fetch in chunks of 170 days until we get enough data or reach the requested 'days'
+        
+        days_fetched = 0
+        while days_fetched < days:
+            chunk_from_date = current_to_date - timedelta(days=min(days - days_fetched, 170)) # Fetch max 170 days or remaining days
             
-        ohlc_data = smart_api.getCandleData(historic_params)
-        log.info(f"Raw response from getCandleData: {ohlc_data}") # Log raw response
+            historic_params = {
+                "exchange": exchange,
+                "symboltoken": symbol_token,
+                "interval": "ONE_DAY",
+                "fromdate": chunk_from_date.strftime("%Y-%m-%d %H:%M"),
+                "todate": current_to_date.strftime("%Y-%m-%d %H:%M")
+            }
+            log.info(f"Sending historic_params to getCandleData (chunk): {historic_params}")
+                
+            ohlc_data_chunk = smart_api.getCandleData(historic_params)
+            log.info(f"Raw response from getCandleData (chunk): {ohlc_data_chunk}")
+
+            if ohlc_data_chunk.get("status") is False:
+                log.error(f"Failed to fetch OHLC data chunk: {ohlc_data_chunk.get('message')}")
+                raise HTTPException(status_code=400, detail=f"Failed to fetch OHLC data chunk: {ohlc_data_chunk.get('message')}")
+            
+            if not ohlc_data_chunk.get("data"): # No more data in this chunk
+                break
+
+            # Prepend new data to maintain chronological order
+            all_ohlc_data = ohlc_data_chunk.get("data") + all_ohlc_data
+            days_fetched += len(ohlc_data_chunk.get("data"))
+            current_to_date = chunk_from_date - timedelta(days=1) # Move to the day before the start of the last chunk
+            
+            # Break if we fetched less than requested for the chunk, indicating no more data available
+            if len(ohlc_data_chunk.get("data")) < min(days - days_fetched + len(ohlc_data_chunk.get("data")), 170):
+                break
+
         smart_api.terminateSession(ANGEL_USERNAME)
         log.debug("Session terminated.")
 
-        if ohlc_data.get("status") is False:
-             log.error(f"Failed to fetch OHLC data: {ohlc_data.get('message')}")
-             raise HTTPException(status_code=400, detail=f"Failed to fetch OHLC data: {ohlc_data.get('message')}")
-
-        return ohlc_data.get("data")
+        return all_ohlc_data
 
     except HTTPException as e:
         log.error(f"HTTPException in get_ohlc_data_internal: {e.detail}")
@@ -258,4 +278,3 @@ def run_momentum_scan(symbols: str, exchange: str = "NSE"):
     scan_results = calculate_momentum_scan(all_ohlc_data)
     
     return {"status": "success", "scan_type": "momentum", "results": scan_results}
- # ... rest of your code
