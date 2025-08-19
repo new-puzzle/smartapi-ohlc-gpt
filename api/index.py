@@ -241,11 +241,25 @@ def strat_pullback_ma(df):
 
 def strat_macd_rsi_swing(df):
     df = _with_indicators(df)
-    macd_ok = df['macd'].iloc[-1] > df['macd_signal'].iloc[-1]
-    rsi_ok  = df['rsi14'].iloc[-1] > 50
-    return {"signal": "buy" if (macd_ok and rsi_ok) else "none",
-            "macd": float(df['macd'].iloc[-1]), "signal": float(df['macd_signal'].iloc[-1]),
-            "rsi": float(df['rsi14'].iloc[-1])}
+    macd_val = float(df['macd'].iloc[-1])
+    macd_sig = float(df['macd_signal'].iloc[-1])
+    rsi_val  = float(df['rsi14'].iloc[-1])
+
+    if macd_val > macd_sig and rsi_val > 50:
+        sig = "buy"
+    elif macd_val < macd_sig and rsi_val < 50:
+        sig = "sell"
+    else:
+        sig = "none"
+
+    return {
+        "signal": sig,
+        "metrics": {
+            "macd": macd_val,
+            "macd_signal": macd_sig,
+            "rsi": rsi_val
+        }
+    }
 
 def strat_bb_squeeze_breakout(df):
     df = _with_indicators(df)
