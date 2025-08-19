@@ -251,8 +251,8 @@ def run_momentum_scan(symbols: str, exchange: str = "NSE"):
             all_ohlc_data.append({"symbol": symbol, "data": [], "error": e.detail})
         except Exception as e:
             error_traceback = traceback.format_exc()
-            log.warning(f"Unexpected error fetching data for {symbol}: {str(e)}
-{error_traceback}")
+            log.warning(f"""Unexpected error fetching data for {symbol}: {str(e)}
+{error_traceback}""")
             all_ohlc_data.append({"symbol": symbol, "data": [], "error": str(e)})
 
     scan_results = calculate_momentum_scan(all_ohlc_data)
