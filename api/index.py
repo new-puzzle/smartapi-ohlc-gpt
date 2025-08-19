@@ -392,18 +392,60 @@ def swingsetup_endpoint(stock_symbol: str,
                         interval: str = "ONE_DAY"):
     """
     Compact summary for a single ticker (trend + momentum hints).
+    Weekly needs a longer lookback (~1500 days) to warm up SMA200/W.
     """
     try:
+        # 1) Ensure enough history for WEEKLY (SMA200 weekly needs ~200 weeks)
+        if interval == "ONE_WEEK":
+            min_days_for_weekly = 1500  # ~ 4 years calendar to be safe
+            if not days or days < min_days_for_weekly:
+                days = min_days_for_weekly
+
+        # 2) Fetch and compute indicators
         data = _fetch_candles(stock_symbol, exchange, days, interval)
         df = _with_indicators(_to_df(data))
-        last = df.dropna().iloc[-1]
-        trend = ("uptrend" if last['sma20']>last['sma50']>last['sma200']
-                 else "downtrend" if last['sma20']<last['sma50']<last['sma200'] else "mixed")
-        momentum = ("bullish" if (last['macd']>last['macd_signal'] and last['rsi14']>50)
-                    else "bearish" if (last['macd']<last['macd_signal'] and last['rsi14']<50) else "neutral")
-        note = "BB squeeze" if (df['bb_width'].iloc[-1] <= np.nanpercentile(df['bb_width'].iloc[-100:],20)) else ""
+
+        # 3) Require the key fields to be non-null; otherwise report not_enough_data
+        needed = ['sma20','sma50','sma200','rsi14','macd','macd_signal']
+        dfx = df.dropna(subset=needed)
+        if dfx.empty:
+            return {
+                "status": "success",
+                "symbol": stock_symbol.upper(),
+                "interval": interval,
+                "trend": "insufficient",
+                "momentum": "insufficient",
+                "levels": {},
+                "note": "not_enough_data: extend lookback (e.g., days=1500 for weekly) to warm up indicators"
+            }
+
+        last = dfx.iloc[-1]
+
+        trend = (
+            "uptrend" if last['sma20'] > last['sma50'] > last['sma200']
+            else "downtrend" if last['sma20'] < last['sma50'] < last['sma200']
+            else "mixed"
+        )
+        momentum = (
+            "bullish" if (last['macd'] > last['macd_signal'] and last['rsi14'] > 50)
+            else "bearish" if (last['macd'] < last['macd_signal'] and last['rsi14'] < 50)
+            else "neutral"
+        )
+
+        # Optional squeeze note (guard with enough history)
+        note = ""
+        if len(df) >= 100 and df['bb_width'].notna().tail(100).any():
+            try:
+                recent = df['bb_width'].tail(100).dropna()
+                if not recent.empty:
+                    import numpy as np
+                    if df['bb_width'].iloc[-1] <= np.nanpercentile(recent, 20):
+                        note = "BB squeeze"
+            except Exception:
+                pass
+
         return {
-            "status":"success",
+            "status": "success",
             "symbol": stock_symbol.upper(),
             "interval": interval,
             "trend": trend,
