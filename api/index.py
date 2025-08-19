@@ -266,7 +266,7 @@ def run_momentum_scan(symbols: str, exchange: str = "NSE"):
     
     return {"status": "success", "scan_type": "momentum", "results": scan_results}
 
-        log.error(f"HTTPException: {e.detail}")
+
         return {"status": "error", "error": e.detail}
     except Exception as e:
         tb = traceback.format_exc()
