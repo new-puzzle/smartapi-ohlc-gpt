@@ -92,57 +92,29 @@ def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int =
             log.error(f"Authentication Failed: {error_message}")
             raise HTTPException(status_code=401, detail=f"Authentication Failed: {error_message}")
 
-        all_ohlc_data = []
-        current_to_date = datetime.now()
+        to_date = datetime.now()
+        from_date = to_date - timedelta(days=days)
         
-        # Fetch data in chunks to overcome the observed ~115-day limit
-        # We will fetch in chunks of 115 days until we get enough data or reach the requested 'days'
-        
-        CHUNK_SIZE = 115 # Observed max days returned per call
-        days_to_fetch_total = days
-        
-        while days_to_fetch_total > 0:
-            # Calculate from_date for the current chunk
-            chunk_from_date = current_to_date - timedelta(days=min(days_to_fetch_total, CHUNK_SIZE))
+        # Corrected date format for Angel Broking API
+        historic_params = {
+            "exchange": exchange,
+            "symboltoken": symbol_token,
+            "interval": "ONE_DAY",
+            "fromdate": from_date.strftime("%Y-%m-%d %H:%M"), # Reverted to original format
+            "todate": to_date.strftime("%Y-%m-%d %H:%M")     # Reverted to original format
+        }
+        log.info(f"Sending historic_params to getCandleData: {historic_params}")
             
-            historic_params = {
-                "exchange": exchange,
-                "symboltoken": symbol_token,
-                "interval": "ONE_DAY",
-                "fromdate": chunk_from_date.strftime("%Y-%m-%d %H:%M"),
-                "todate": current_to_date.strftime("%Y-%m-%d %H:%M")
-            }
-            log.info(f"Sending historic_params to getCandleData (chunk): {historic_params}")
-                
-            ohlc_data_chunk = smart_api.getCandleData(historic_params)
-            log.info(f"Raw response from getCandleData (chunk): {ohlc_data_chunk}")
-
-            if ohlc_data_chunk.get("status") is False:
-                log.error(f"Failed to fetch OHLC data chunk: {ohlc_data_chunk.get('message')}")
-                raise HTTPException(status_code=400, detail=f"Failed to fetch OHLC data chunk: {ohlc_data_chunk.get('message')}")
-            
-            chunk_data = ohlc_data_chunk.get("data")
-            if not chunk_data: # No more data in this chunk, or reached end of available history
-                log.info(f"No data returned for chunk ending {current_to_date.strftime('%Y-%m-%d')}. Breaking loop.")
-                break
-
-            # Prepend new data to maintain chronological order
-            all_ohlc_data = chunk_data + all_ohlc_data
-            
-            # Update for next iteration
-            days_fetched_in_chunk = len(chunk_data)
-            days_to_fetch_total -= days_fetched_in_chunk
-            current_to_date = chunk_from_date - timedelta(days=1) # Move to the day before the start of the last chunk
-            
-            # If we fetched less than the CHUNK_SIZE, it means we hit the end of available history
-            if days_fetched_in_chunk < CHUNK_SIZE:
-                log.info(f"Fetched {days_fetched_in_chunk} days in chunk, less than CHUNK_SIZE {CHUNK_SIZE}. Assuming end of history.")
-                break
-
+        ohlc_data = smart_api.getCandleData(historic_params)
+        log.info(f"Raw response from getCandleData: {ohlc_data}") # Log raw response
         smart_api.terminateSession(ANGEL_USERNAME)
         log.debug("Session terminated.")
 
-        return all_ohlc_data
+        if ohlc_data.get("status") is False:
+             log.error(f"Failed to fetch OHLC data: {ohlc_data.get('message')}")
+             raise HTTPException(status_code=400, detail=f"Failed to fetch OHLC data: {ohlc_data.get('message')}")
+
+        return ohlc_data.get("data")
 
     except HTTPException as e:
         log.error(f"HTTPException in get_ohlc_data_internal: {e.detail}")
