@@ -229,7 +229,7 @@ def run_strategy_scan(stock_symbol: str, strategy: str, exchange: str = "NSE"):
         error_traceback = traceback.format_exc()
         log.critical(f"An unexpected error occurred in run_strategy_scan: {str(e)}
 {error_traceback}")
-        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred during strategy scan: {str(e)}.")
+        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred during strategy scan: {str(e)}. Please check server logs for details.")
 
 @app.get("/api/momentumscan")
 def run_momentum_scan(symbols: str, exchange: str = "NSE"):
