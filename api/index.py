@@ -5,6 +5,7 @@ import requests
 import json
 from datetime import datetime, timedelta
 import pyotp
+import pandas as pd
 
 # --- THE DIRECTORY TRICK ---
 # Change the current working directory to the only writable one
@@ -19,16 +20,6 @@ API_SECRET = os.environ.get("ANGEL_API_SECRET")
 ANGEL_USERNAME = os.environ.get("ANGEL_USERNAME")
 ANGEL_MPIN = os.environ.get("ANGEL_MPIN")
 ANGEL_TOTP_SECRET = os.environ.get("ANGEL_TOTP_SECRET")
-CUSTOM_GPT_API_KEY = os.environ.get("CUSTOM_GPT_API_KEY")
-
-# --- API Key Authentication Dependency ---
-# async def verify_api_key(x_api_key: str = Header(...)):
-#     if not CUSTOM_GPT_API_KEY:
-#         raise HTTPException(status_code=500, detail="Server configuration error: CUSTOM_GPT_API_KEY not set.")
-#     if x_api_key != CUSTOM_GPT_API_KEY:
-#         raise HTTPException(status_code=401, detail="Invalid API Key")
-#     return x_api_key
-# --- END API Key Authentication Dependency ---
 CUSTOM_GPT_API_KEY = os.environ.get("CUSTOM_GPT_API_KEY")
 
 INSTRUMENT_LIST_PATH = "/tmp/instrument_list.json"
@@ -55,46 +46,25 @@ def get_token_from_symbol(symbol: str, exchange: str = "NSE"):
     for instrument in instrument_list:
         if instrument.get("symbol") == search_symbol and instrument.get("exch_seg") == exchange:
             return instrument.get("token")
-    print(f"[DEBUG] get_token_from_symbol called for symbol: {symbol}, exchange: {exchange}")
-    instrument_list = get_instrument_list()
-    print(f"[DEBUG] Instrument list loaded. Size: {len(instrument_list) if instrument_list else 0}")
-    search_symbol = f"{symbol.upper()}-EQ"
-    for instrument in instrument_list:
-        if instrument.get("symbol") == search_symbol and instrument.get("exch_seg") == exchange:
-            print(f"[DEBUG] Found token: {instrument.get("token")}")
-            return instrument.get("token")
-    print(f"[DEBUG] Symbol '{symbol}' not found after search.")
     raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not found on exchange '{exchange}'. Please check the symbol and try again.")
 
-@app.get("/api/get-ohlc")
-def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
-    print(f"[DEBUG] get_ohlc_data called for {stock_symbol}")
-    
+def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int = 30):
     if not all([API_KEY, API_SECRET, ANGEL_USERNAME, ANGEL_MPIN, ANGEL_TOTP_SECRET]):
-        raise HTTPException(status_code=500, detail="Server configuration error: Missing one or more Angel Broking API credentials in Vercel settings. Please ensure all are set.")
+        raise HTTPException(status_code=500, detail="Server configuration error: Missing one or more Angel Broking API credentials.")
 
     try:
         totp = pyotp.TOTP(ANGEL_TOTP_SECRET).now()
-        print(f"[DEBUG] TOTP generated.")
-            
         symbol_token = get_token_from_symbol(stock_symbol, exchange)
-        print(f"[DEBUG] Symbol token retrieved: {symbol_token}")
-            
-        # This will now create its 'logs' folder inside /tmp, which is allowed
         smart_api = SmartConnect(api_key=API_KEY)
-        print(f"[DEBUG] SmartConnect initialized.")
-            
         session_data = smart_api.generateSession(ANGEL_USERNAME, ANGEL_MPIN, totp)
-        print(f"[DEBUG] Session generation attempt. Status: {session_data.get("status")}")
-            
+        
         if not session_data or session_data.get("status") is False:
-            error_message = session_data.get("message", "Unknown error during session generation.")
-            raise HTTPException(status_code=401, detail=f"Authentication Failed with Angel Broking: {error_message}. Please check your Angel Broking credentials.")
+            error_message = session_data.get("message", "Unknown error")
+            raise HTTPException(status_code=401, detail=f"Authentication Failed: {error_message}")
 
         to_date = datetime.now()
         from_date = to_date - timedelta(days=days)
-        print(f"[DEBUG] Fetching data from {from_date.strftime("%Y-%m-%d %H:%M")} to {to_date.strftime("%Y-%m-%d %H:%M")}")
-            
+        
         historic_params = {
             "exchange": exchange,
             "symboltoken": symbol_token,
@@ -104,23 +74,138 @@ def get_ohlc_data(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         }
             
         ohlc_data = smart_api.getCandleData(historic_params)
-        print(f"[DEBUG] getCandleData attempt. Status: {ohlc_data.get("status")}")
         smart_api.terminateSession(ANGEL_USERNAME)
-        print(f"[DEBUG] Session terminated.")
 
         if ohlc_data.get("status") is False:
-             raise HTTPException(status_code=400, detail=f"Failed to fetch OHLC data from Angel Broking: {ohlc_data.get('message')}. Please check parameters or Angel Broking status.")
+             raise HTTPException(status_code=400, detail=f"Failed to fetch OHLC data: {ohlc_data.get('message')}")
 
-        return {"status": "success", "symbol": stock_symbol, "data": ohlc_data.get("data")}
+        return ohlc_data.get("data")
 
     except HTTPException as e:
-        # Re-raise HTTPException directly as they are expected errors
-        print(f"[ERROR] HTTPException caught: {e.detail}")
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred: {str(e)}")
+
+def calculate_golden_cross(data):
+    if not data or len(data) < 200:
+        return {"signal": "not_enough_data", "detail": f"Need at least 200 days of data, but got {len(data)}."}
+
+    df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['close'] = pd.to_numeric(df['close'])
+    
+    df['ma50'] = df['close'].rolling(window=50).mean()
+    df['ma200'] = df['close'].rolling(window=200).mean()
+    
+    last_ma50 = df['ma50'].iloc[-1]
+    last_ma200 = df['ma200'].iloc[-1]
+    prev_ma50 = df['ma50'].iloc[-2]
+    prev_ma200 = df['ma200'].iloc[-2]
+
+    if pd.isna(last_ma50) or pd.isna(last_ma200) or pd.isna(prev_ma50) or pd.isna(prev_ma200):
+        return {"signal": "not_enough_data", "detail": "Could not calculate moving averages for the full period."}
+
+    signal = "none"
+    if prev_ma50 <= prev_ma200 and last_ma50 > last_ma200:
+        signal = "buy"
+    elif prev_ma50 >= prev_ma200 and last_ma50 < last_ma200:
+        signal = "sell" # Death Cross
+
+    return {"signal": signal, "ma50": last_ma50, "ma200": last_ma200}
+
+def calculate_momentum_scan(data_list):
+    results = []
+    for stock_data in data_list:
+        symbol = stock_data["symbol"]
+        data = stock_data["data"]
+
+        if not data or len(data) < 250: # Need enough data for 52W high and RSI
+            results.append({"symbol": symbol, "signal": "not_enough_data", "detail": f"Not enough data for {symbol}."})
+            continue
+
+        df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        df['close'] = pd.to_numeric(df['close'])
+        df['volume'] = pd.to_numeric(df['volume'])
+
+        # Calculate 52-week high (approx 250 trading days)
+        high_52_weeks = df['high'].iloc[-250:].max()
+        current_close = df['close'].iloc[-1]
+        
+        # Check if trading near 52W high (e.g., within 5%)
+        near_52w_high = (current_close >= high_52_weeks * 0.95)
+
+        # Calculate RSI (14-period RSI)
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        current_rsi = rsi.iloc[-1]
+
+        # Check strong volume (e.g., above 20D average)
+        avg_volume_20d = df['volume'].iloc[-20:].mean()
+        current_volume = df['volume'].iloc[-1]
+        strong_volume = (current_volume > avg_volume_20d * 1.2) # 20% above avg
+
+        signal = "none"
+        if near_52w_high and current_rsi > 60 and strong_volume:
+            signal = "buy"
+        
+        results.append({"symbol": symbol, "signal": signal, "near_52w_high": near_52w_high, "current_rsi": current_rsi, "strong_volume": strong_volume, "52w_high_value": high_52_weeks, "current_close": current_close})
+    return results
+
+@app.get("/api/get-ohlc")
+def get_ohlc_endpoint(stock_symbol: str, exchange: str = "NSE", days: int = 30):
+    try:
+        ohlc_data = get_ohlc_data_internal(stock_symbol, exchange, days)
+        return {"status": "success", "symbol": stock_symbol, "data": ohlc_data}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred: {str(e)}")
+
+
+@app.get("/api/strategyscan")
+def run_strategy_scan(stock_symbol: str, strategy: str, exchange: str = "NSE"):
+    if strategy.lower() != "golden_cross":
+        raise HTTPException(status_code=400, detail=f"Strategy '{strategy}' is not supported. Currently, only 'golden_cross' is available.")
+
+    try:
+        # Need at least 200 days for golden cross, plus some buffer
+        ohlc_data = get_ohlc_data_internal(stock_symbol, exchange, days=250)
+        
+        result = calculate_golden_cross(ohlc_data)
+        
+        return {"status": "success", "symbol": stock_symbol, "strategy": strategy, "result": result}
+
+    except HTTPException as e:
         raise e
     except Exception as e:
         import traceback
         error_traceback = traceback.format_exc()
-        print(f"[CRITICAL ERROR] An unexpected error occurred: {str(e)}
-{error_traceback}")
-        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred: {str(e)}. Please check server logs for details.")
+        print(f"[CRITICAL ERROR] An unexpected error occurred in strategyscan: {str(e)}\n{error_traceback}")
+        raise HTTPException(status_code=500, detail=f"An unexpected server error occurred during strategy scan: {str(e)}.")
+
+@app.get("/api/momentumscan")
+def run_momentum_scan(symbols: str, exchange: str = "NSE"):
+    symbol_list = [s.strip() for s in symbols.split(',') if s.strip()]
+    if not symbol_list:
+        raise HTTPException(status_code=400, detail="No symbols provided for momentum scan.")
+
+    all_ohlc_data = []
+    for symbol in symbol_list:
+        try:
+            # Request enough days for 52W high and RSI calculation
+            ohlc_data = get_ohlc_data_internal(symbol, exchange, days=250)
+            all_ohlc_data.append({"symbol": symbol, "data": ohlc_data})
+        except HTTPException as e:
+            # Log the error but continue with other symbols
+            print(f"[WARNING] Could not fetch data for {symbol}: {e.detail}")
+            all_ohlc_data.append({"symbol": symbol, "data": [], "error": e.detail})
+        except Exception as e:
+            print(f"[WARNING] Unexpected error fetching data for {symbol}: {str(e)}")
+            all_ohlc_data.append({"symbol": symbol, "data": [], "error": str(e)})
+
+    scan_results = calculate_momentum_scan(all_ohlc_data)
+    
+    return {"status": "success", "scan_type": "momentum", "results": scan_results}
 
