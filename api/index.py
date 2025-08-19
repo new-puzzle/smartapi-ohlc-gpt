@@ -65,7 +65,7 @@ def get_token_from_symbol(symbol: str, exchange: str = "NSE"):
         if instrument.get("symbol") == search_symbol and instrument.get("exch_seg") == exchange:
             return instrument.get("token")
     log.error(f"Symbol '{symbol}' not found on exchange '{exchange}'.")
-    raise HTTPException(status_code=400, detail=f"Symbol '{symbol}' not found on exchange '{exchange}'. Please check the symbol and try again.")
+    raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not found on exchange '{exchange}'. Please check the symbol and try again.")
 
 def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int = 30):
     log.info(f"get_ohlc_data_internal called for {stock_symbol}, requesting {days} days.")
@@ -121,8 +121,8 @@ def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int =
         raise e
     except Exception as e:
         error_traceback = traceback.format_exc()
-        log.critical(f"An unexpected error occurred in get_ohlc_data_internal: {str(e)}
-{error_traceback}")
+        log.critical(f"""An unexpected error occurred in get_ohlc_data_internal: {str(e)}
+{error_traceback}""")
         raise HTTPException(status_code=500, detail=f"An unexpected server error occurred: {str(e)}. Please check server logs for details.")
 
 def calculate_golden_cross(data):
@@ -202,7 +202,8 @@ def get_ohlc_endpoint(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         raise e
     except Exception as e:
         error_traceback = traceback.format_exc()
-        log.critical(f"An unexpected error occurred in get_ohlc_endpoint: {str(e)}\n{error_traceback}")
+        log.critical(f"""An unexpected error occurred in get_ohlc_endpoint: {str(e)}
+{error_traceback}""")
         raise HTTPException(status_code=500, detail=f"An unexpected server error occurred: {str(e)}. Please check server logs for details.")
 
 
@@ -226,7 +227,8 @@ def run_strategy_scan(stock_symbol: str, strategy: str, exchange: str = "NSE"):
         raise e
     except Exception as e:
         error_traceback = traceback.format_exc()
-        log.critical(f"An unexpected error occurred in run_strategy_scan: {str(e)}\n{error_traceback}")
+        log.critical(f"""An unexpected error occurred in run_strategy_scan: {str(e)}
+{error_traceback}""")
         raise HTTPException(status_code=500, detail=f"An unexpected server error occurred during strategy scan: {str(e)}. Please check server logs for details.")
 
 @app.get("/api/momentumscan")
@@ -249,7 +251,8 @@ def run_momentum_scan(symbols: str, exchange: str = "NSE"):
             all_ohlc_data.append({"symbol": symbol, "data": [], "error": e.detail})
         except Exception as e:
             error_traceback = traceback.format_exc()
-            log.warning(f"Unexpected error fetching data for {symbol}: {str(e)}\n{error_traceback}")
+            log.warning(f"Unexpected error fetching data for {symbol}: {str(e)}
+{error_traceback}")
             all_ohlc_data.append({"symbol": symbol, "data": [], "error": str(e)})
 
     scan_results = calculate_momentum_scan(all_ohlc_data)
