@@ -95,13 +95,13 @@ def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int =
         to_date = datetime.now()
         from_date = to_date - timedelta(days=days)
         
-        # Simplify date format and add debug logging
+        # Corrected date format for Angel Broking API
         historic_params = {
             "exchange": exchange,
             "symboltoken": symbol_token,
             "interval": "ONE_DAY",
-            "fromdate": from_date.strftime("%Y-%m-%d"), # Simplified format
-            "todate": to_date.strftime("%Y-%m-%d")     # Simplified format
+            "fromdate": from_date.strftime("%Y-%m-%d %H:%M"), # Reverted to original format
+            "todate": to_date.strftime("%Y-%m-%d %H:%M")     # Reverted to original format
         }
         log.info(f"Sending historic_params to getCandleData: {historic_params}")
             
@@ -121,7 +121,8 @@ def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int =
         raise e
     except Exception as e:
         error_traceback = traceback.format_exc()
-        log.critical(f"An unexpected error occurred in get_ohlc_data_internal: {str(e)}\n{error_traceback}")
+        log.critical(f"An unexpected error occurred in get_ohlc_data_internal: {str(e)}
+{error_traceback}")
         raise HTTPException(status_code=500, detail=f"An unexpected server error occurred: {str(e)}. Please check server logs for details.")
 
 def calculate_golden_cross(data):
@@ -201,7 +202,8 @@ def get_ohlc_endpoint(stock_symbol: str, exchange: str = "NSE", days: int = 30):
         raise e
     except Exception as e:
         error_traceback = traceback.format_exc()
-        log.critical(f"An unexpected error occurred in get_ohlc_endpoint: {str(e)}\n{error_traceback}")
+        log.critical(f"An unexpected error occurred in get_ohlc_endpoint: {str(e)}
+{error_traceback}")
         raise HTTPException(status_code=500, detail=f"An unexpected server error occurred: {str(e)}. Please check server logs for details.")
 
 
@@ -225,7 +227,8 @@ def run_strategy_scan(stock_symbol: str, strategy: str, exchange: str = "NSE"):
         raise e
     except Exception as e:
         error_traceback = traceback.format_exc()
-        log.critical(f"An unexpected error occurred in run_strategy_scan: {str(e)}\n{error_traceback}")
+        log.critical(f"An unexpected error occurred in run_strategy_scan: {str(e)}
+{error_traceback}")
         raise HTTPException(status_code=500, detail=f"An unexpected server error occurred during strategy scan: {str(e)}.")
 
 @app.get("/api/momentumscan")
@@ -248,7 +251,8 @@ def run_momentum_scan(symbols: str, exchange: str = "NSE"):
             all_ohlc_data.append({"symbol": symbol, "data": [], "error": e.detail})
         except Exception as e:
             error_traceback = traceback.format_exc()
-            log.warning(f"Unexpected error fetching data for {symbol}: {str(e)}\n{error_traceback}")
+            log.warning(f"Unexpected error fetching data for {symbol}: {str(e)}
+{error_traceback}")
             all_ohlc_data.append({"symbol": symbol, "data": [], "error": str(e)})
 
     scan_results = calculate_momentum_scan(all_ohlc_data)
