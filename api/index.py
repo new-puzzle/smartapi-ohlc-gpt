@@ -206,6 +206,40 @@ def _with_indicators(df):
     out['vol_ma20'] = _sma(out['volume'], 20)
     return out
 
+# ----------------- Momentum helper (daily vs weekly aware) -----------------
+def _momentum_signal_from_df(df, interval: str):
+    """
+    Weekly uses 52 weeks; Daily uses 250 sessions.
+    Volume filter uses 20-period avg in the same timeframe.
+    """
+    if interval == "ONE_WEEK":
+        min_n = 52
+        lookback = 52
+        vol_ma = 20
+    else:
+        min_n = 250
+        lookback = 250
+        vol_ma = 20
+
+    if len(df) < min_n:
+        return {"signal": "not_enough_data"}
+
+    hi = df['high'].iloc[-lookback:].max()
+    close = df['close'].iloc[-1]
+    rsi = _rsi(df['close']).iloc[-1]
+
+    vol_ma_val = df['volume'].rolling(vol_ma).mean().iloc[-1]
+    vol_strong = (pd.notna(vol_ma_val) and df['volume'].iloc[-1] > (vol_ma_val * 1.2))
+    near = (close >= hi * 0.95)
+
+    sig = "buy" if (near and pd.notna(rsi) and (rsi > 60) and vol_strong) else "none"
+    return {
+        "signal": sig,
+        "near_52w_high": bool(near),
+        "rsi": float(rsi) if pd.notna(rsi) else None,
+        "close": float(close) if pd.notna(close) else None
+    }
+
 # ----------------- Strategy logic -----------------
 def strat_golden_cross(df):
     if len(df) < 200: return {"signal":"not_enough_data"}
@@ -220,11 +254,9 @@ def strat_golden_cross(df):
 def strat_rsi_reversal(df):
     df = _with_indicators(df)
     rsi = df['rsi14']
-    # find last cross from <30 to >30
     crossed = (rsi.shift(1) < 30) & (rsi >= 30)
     if crossed.iloc[-50:].any():
         return {"signal":"buy", "rsi": float(rsi.iloc[-1])}
-    # optional note if >70
     if rsi.iloc[-1] > 70:
         return {"signal":"sell_note", "rsi": float(rsi.iloc[-1])}
     return {"signal":"none", "rsi": float(rsi.iloc[-1])}
@@ -235,7 +267,7 @@ def strat_pullback_ma(df):
     if pd.isna(sma50) or pd.isna(sma200): return {"signal":"not_enough_data"}
     cond_trend = c > sma200
     near50 = abs(c - sma50) / sma50 <= 0.05 if sma50 else False
-    bounce = c > df['close'].iloc[-2]  # simple bounce proxy
+    bounce = c > df['close'].iloc[-2]
     sig = "buy" if (cond_trend and near50 and bounce) else "none"
     return {"signal": sig, "close": float(c), "sma50": float(sma50), "sma200": float(sma200)}
 
@@ -263,7 +295,6 @@ def strat_macd_rsi_swing(df):
 
 def strat_bb_squeeze_breakout(df):
     df = _with_indicators(df)
-    # squeeze = bb width in last 100 days is low (<= 20th percentile), breakout = close > upper band today
     recent = df.tail(100)
     if recent.empty: return {"signal":"not_enough_data"}
     thresh = np.nanpercentile(recent['bb_width'], 20)
@@ -273,7 +304,7 @@ def strat_bb_squeeze_breakout(df):
     return {"signal": sig, "bb_width": float(df['bb_width'].iloc[-1])}
 
 def strat_pullback_vol_midcap(df):
-    # NOTE: market cap filter (₹5K–₹30K Cr) NOT applied here (OHLC-only service). GPT can add that via web step.
+    # NOTE: market cap filter (₹5K–₹30K Cr) NOT applied here (OHLC-only service).
     df = _with_indicators(df)
     c = df['close'].iloc[-1]; sma50 = df['sma50'].iloc[-1]; rsi = df['rsi14'].iloc[-1]
     near50 = pd.notna(sma50) and (abs(c - sma50)/sma50 <= 0.05)
@@ -285,9 +316,7 @@ def strat_pullback_vol_midcap(df):
 def strat_inside_bar_breakout(df):
     if len(df) < 3: return {"signal":"not_enough_data"}
     df = df.copy()
-    # Inside bar on day -2 relative to -3
     ib = (df['high'].shift(1) < df['high'].shift(2)) & (df['low'].shift(1) > df['low'].shift(2))
-    # Breakout on latest day above inside high with volume > 3-day avg
     vol3 = df['volume'].rolling(3).mean()
     breakout = (df['close'] > df['high'].shift(1)) & (df['volume'] > vol3)
     sig = "buy" if (ib.iloc[-1] and breakout.iloc[-1]) else "none"
@@ -299,7 +328,7 @@ STRATEGY_FUNCS = {
     "pullback_ma": strat_pullback_ma,
     "macd_rsi_swing": strat_macd_rsi_swing,
     "bb_squeeze_breakout": strat_bb_squeeze_breakout,
-    "pullback_vol_midcap": strat_pullback_vol_midcap,  # market-cap filter not applied
+    "pullback_vol_midcap": strat_pullback_vol_midcap,
     "inside_bar_breakout": strat_inside_bar_breakout,
 }
 
@@ -359,31 +388,38 @@ def momentumscan_endpoint(symbols: str,
                           days: int = 300,
                           interval: str = "ONE_DAY"):
     """
-    Simple momentum scan near 52w high + RSI>60 + vol strong
+    Weekly-aware momentum scan:
+    - ONE_DAY: last ~250 sessions baseline
+    - ONE_WEEK: last ~52 weeks baseline (auto-widen lookback if needed)
     """
-    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-    if not syms:
-        raise HTTPException(status_code=400, detail="No symbols provided.")
+    try:
+        syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        if not syms:
+            raise HTTPException(status_code=400, detail="No symbols provided.")
 
-    results = []
-    for s in syms:
-        try:
-            data = _fetch_candles(s, exchange, days, interval)
-            df = _to_df(data)
-            if len(df) < 250:
-                results.append({"symbol": s, "signal":"not_enough_data"}); continue
-            hi52 = df['high'].iloc[-250:].max()
-            close = df['close'].iloc[-1]
-            rsi = _rsi(df['close']).iloc[-1]
-            vol_strong = df['volume'].iloc[-1] > df['volume'].iloc[-20:].mean() * 1.2
-            near = close >= hi52 * 0.95
-            sig = "buy" if (near and (rsi > 60) and vol_strong) else "none"
-            results.append({"symbol": s, "signal": sig, "near_52w_high": bool(near), "rsi": float(rsi), "close": float(close)})
-        except Exception as e:
-            log.warning(f"momentumscan failed for {s}: {e}")
-            results.append({"symbol": s, "signal":"error","error":str(e)})
+        # Ensure enough lookback for weekly mode
+        if interval == "ONE_WEEK":
+            min_days_for_weekly_momo = 1100  # ~3 years to safely get 52 finished weeks
+            if not days or days < min_days_for_weekly_momo:
+                days = min_days_for_weekly_momo
 
-    return {"status": "success", "scan_type": "momentum", "results": results}
+        results = []
+        for s in syms:
+            try:
+                data = _fetch_candles(s, exchange, days, interval)
+                df = _to_df(data)
+                res = _momentum_signal_from_df(df, interval)
+                results.append({"symbol": s, **res})
+            except Exception as e:
+                log.warning(f"momentumscan failed for {s}: {e}")
+                results.append({"symbol": s, "signal":"error","error":str(e)})
+
+        return {"status": "success", "scan_type": "momentum", "results": results}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        log.exception("Unexpected error in momentumscan")
+        raise HTTPException(status_code=500, detail=f"Server error: {e}")
 
 @app.get("/api/swingsetup")
 def swingsetup_endpoint(stock_symbol: str,
@@ -395,17 +431,15 @@ def swingsetup_endpoint(stock_symbol: str,
     Weekly needs a longer lookback (~1500 days) to warm up SMA200/W.
     """
     try:
-        # 1) Ensure enough history for WEEKLY (SMA200 weekly needs ~200 weeks)
+        # Ensure enough history for WEEKLY (SMA200 weekly needs ~200 weeks)
         if interval == "ONE_WEEK":
-            min_days_for_weekly = 1500  # ~ 4 years calendar to be safe
+            min_days_for_weekly = 1500  # ~4 years to be safe
             if not days or days < min_days_for_weekly:
                 days = min_days_for_weekly
 
-        # 2) Fetch and compute indicators
         data = _fetch_candles(stock_symbol, exchange, days, interval)
         df = _with_indicators(_to_df(data))
 
-        # 3) Require the key fields to be non-null; otherwise report not_enough_data
         needed = ['sma20','sma50','sma200','rsi14','macd','macd_signal']
         dfx = df.dropna(subset=needed)
         if dfx.empty:
@@ -420,25 +454,18 @@ def swingsetup_endpoint(stock_symbol: str,
             }
 
         last = dfx.iloc[-1]
+        trend = ("uptrend" if last['sma20'] > last['sma50'] > last['sma200']
+                 else "downtrend" if last['sma20'] < last['sma50'] < last['sma200']
+                 else "mixed")
+        momentum = ("bullish" if (last['macd'] > last['macd_signal'] and last['rsi14'] > 50)
+                    else "bearish" if (last['macd'] < last['macd_signal'] and last['rsi14'] < 50)
+                    else "neutral")
 
-        trend = (
-            "uptrend" if last['sma20'] > last['sma50'] > last['sma200']
-            else "downtrend" if last['sma20'] < last['sma50'] < last['sma200']
-            else "mixed"
-        )
-        momentum = (
-            "bullish" if (last['macd'] > last['macd_signal'] and last['rsi14'] > 50)
-            else "bearish" if (last['macd'] < last['macd_signal'] and last['rsi14'] < 50)
-            else "neutral"
-        )
-
-        # Optional squeeze note (guard with enough history)
         note = ""
         if len(df) >= 100 and df['bb_width'].notna().tail(100).any():
             try:
                 recent = df['bb_width'].tail(100).dropna()
                 if not recent.empty:
-                    import numpy as np
                     if df['bb_width'].iloc[-1] <= np.nanpercentile(recent, 20):
                         note = "BB squeeze"
             except Exception:
