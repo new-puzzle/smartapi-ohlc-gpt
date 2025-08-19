@@ -68,7 +68,7 @@ def get_token_from_symbol(symbol: str, exchange: str = "NSE"):
     raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not found on exchange '{exchange}'. Please check the symbol and try again.")
 
 def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int = 30):
-    log.info(f"get_ohlc_data_internal called for {stock_symbol}")
+    log.info(f"get_ohlc_data_internal called for {stock_symbol}, requesting {days} days.")
     
     if not all([API_KEY, API_SECRET, ANGEL_USERNAME, ANGEL_MPIN, ANGEL_TOTP_SECRET]):
         log.error("Missing Angel Broking API credentials.")
@@ -94,18 +94,19 @@ def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int =
 
         to_date = datetime.now()
         from_date = to_date - timedelta(days=days)
-        log.debug(f"Fetching data from {from_date.strftime("%Y-%m-%d %H:%M")} to {to_date.strftime("%Y-%m-%d %H:%M")}")
-            
+        
+        # Simplify date format and add debug logging
         historic_params = {
             "exchange": exchange,
             "symboltoken": symbol_token,
             "interval": "ONE_DAY",
-            "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
-            "todate": to_date.strftime("%Y-%m-%d %H:%M")
+            "fromdate": from_date.strftime("%Y-%m-%d"), # Simplified format
+            "todate": to_date.strftime("%Y-%m-%d")     # Simplified format
         }
+        log.info(f"Sending historic_params to getCandleData: {historic_params}")
             
         ohlc_data = smart_api.getCandleData(historic_params)
-        log.debug(f"getCandleData attempt. Status: {ohlc_data.get("status")}")
+        log.info(f"Raw response from getCandleData: {ohlc_data}") # Log raw response
         smart_api.terminateSession(ANGEL_USERNAME)
         log.debug("Session terminated.")
 
