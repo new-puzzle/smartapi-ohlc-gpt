@@ -95,13 +95,15 @@ def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int =
         all_ohlc_data = []
         current_to_date = datetime.now()
         
-        # Fetch data in chunks to overcome the 170-day limit
-        # The Angel Broking API seems to return max ~170 days per call for ONE_DAY interval
-        # We will fetch in chunks of 170 days until we get enough data or reach the requested 'days'
+        # Fetch data in chunks to overcome the observed ~115-day limit
+        # We will fetch in chunks of 115 days until we get enough data or reach the requested 'days'
         
-        days_fetched = 0
-        while days_fetched < days:
-            chunk_from_date = current_to_date - timedelta(days=min(days - days_fetched, 170)) # Fetch max 170 days or remaining days
+        CHUNK_SIZE = 115 # Observed max days returned per call
+        days_to_fetch_total = days
+        
+        while days_to_fetch_total > 0:
+            # Calculate from_date for the current chunk
+            chunk_from_date = current_to_date - timedelta(days=min(days_to_fetch_total, CHUNK_SIZE))
             
             historic_params = {
                 "exchange": exchange,
@@ -119,16 +121,22 @@ def get_ohlc_data_internal(stock_symbol: str, exchange: str = "NSE", days: int =
                 log.error(f"Failed to fetch OHLC data chunk: {ohlc_data_chunk.get('message')}")
                 raise HTTPException(status_code=400, detail=f"Failed to fetch OHLC data chunk: {ohlc_data_chunk.get('message')}")
             
-            if not ohlc_data_chunk.get("data"): # No more data in this chunk
+            chunk_data = ohlc_data_chunk.get("data")
+            if not chunk_data: # No more data in this chunk, or reached end of available history
+                log.info(f"No data returned for chunk ending {current_to_date.strftime('%Y-%m-%d')}. Breaking loop.")
                 break
 
             # Prepend new data to maintain chronological order
-            all_ohlc_data = ohlc_data_chunk.get("data") + all_ohlc_data
-            days_fetched += len(ohlc_data_chunk.get("data"))
+            all_ohlc_data = chunk_data + all_ohlc_data
+            
+            # Update for next iteration
+            days_fetched_in_chunk = len(chunk_data)
+            days_to_fetch_total -= days_fetched_in_chunk
             current_to_date = chunk_from_date - timedelta(days=1) # Move to the day before the start of the last chunk
             
-            # Break if we fetched less than requested for the chunk, indicating no more data available
-            if len(ohlc_data_chunk.get("data")) < min(days - days_fetched + len(ohlc_data_chunk.get("data")), 170):
+            # If we fetched less than the CHUNK_SIZE, it means we hit the end of available history
+            if days_fetched_in_chunk < CHUNK_SIZE:
+                log.info(f"Fetched {days_fetched_in_chunk} days in chunk, less than CHUNK_SIZE {CHUNK_SIZE}. Assuming end of history.")
                 break
 
         smart_api.terminateSession(ANGEL_USERNAME)
