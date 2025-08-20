@@ -398,7 +398,7 @@ def strategyscan_endpoint(symbols: str,
     """
     Example:
       /api/strategyscan?symbols=SBIN,RELIANCE&strategy=golden_cross
-      NOTE: For golden_cross you should have >=250 days (daily) or ~200 bars (weekly).
+      NOTE: For weekly, prefer ~1500 days to warm up indicators.
     """
     strategy_key = strategy.strip().lower()
     if strategy_key not in STRATEGY_FUNCS:
@@ -407,12 +407,11 @@ def strategyscan_endpoint(symbols: str,
     if not syms:
         raise HTTPException(status_code=400, detail="No symbols provided.")
 
-    # Ensure enough lookback in weekly mode to warm up indicators (e.g., SMA200/W)
     if interval == "ONE_WEEK":
         if not days or days < 1500:
             days = 1500
 
-    results = []
+    results, failed = [], []
     for s in syms:
         try:
             data = _fetch_candles_with_retry(s, exchange, days, interval)
@@ -421,9 +420,10 @@ def strategyscan_endpoint(symbols: str,
             results.append({"symbol": s, "strategy": strategy_key, "result": out})
         except Exception as e:
             log.warning(f"strategyscan failed for {s}: {e}")
+            failed.append(s)
             results.append({"symbol": s, "strategy": strategy_key, "result": {"signal":"error","error":str(e)}})
 
-    return {"status": "success", "results": results}
+    return {"status": "success", "results": results, "failed_symbols": failed}
 
 @app.get("/api/momentumscan")
 def momentumscan_endpoint(symbols: str,
@@ -444,11 +444,11 @@ def momentumscan_endpoint(symbols: str,
             raise HTTPException(status_code=400, detail="No symbols provided.")
 
         if interval == "ONE_WEEK":
-            min_days_for_weekly_momo = 1100  # ~3 years to safely get 52 finished weeks
+            min_days_for_weekly_momo = 1100
             if not days or days < min_days_for_weekly_momo:
                 days = min_days_for_weekly_momo
 
-        results = []
+        results, failed = [], []
         for s in syms:
             try:
                 data = _fetch_candles_with_retry(s, exchange, days, interval)
@@ -457,9 +457,10 @@ def momentumscan_endpoint(symbols: str,
                 results.append({"symbol": s, **res})
             except Exception as e:
                 log.warning(f"momentumscan failed for {s}: {e}")
+                failed.append(s)
                 results.append({"symbol": s, "signal":"error","error":str(e)})
 
-        return {"status": "success", "scan_type": "momentum", "results": results}
+        return {"status": "success", "scan_type": "momentum", "results": results, "failed_symbols": failed}
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -477,7 +478,7 @@ def swingsetup_endpoint(stock_symbol: str,
     """
     try:
         if interval == "ONE_WEEK":
-            min_days_for_weekly = 1500  # ~4 years to be safe
+            min_days_for_weekly = 1500
             if not days or days < min_days_for_weekly:
                 days = min_days_for_weekly
 
@@ -553,13 +554,12 @@ def momentumscan_post(req: MomentumScanRequest):
         days = req.days or 300
         exchange = req.exchange or "NSE"
 
-        # Ensure enough lookback for weekly mode
         if interval == "ONE_WEEK":
             min_days_for_weekly_momo = 1100
             if not days or days < min_days_for_weekly_momo:
                 days = min_days_for_weekly_momo
 
-        results = []
+        results, failed = [], []
         for s in syms:
             try:
                 data = _fetch_candles_with_retry(s, exchange, days, interval)
@@ -573,9 +573,10 @@ def momentumscan_post(req: MomentumScanRequest):
                 results.append({"symbol": s, **res})
             except Exception as e:
                 log.warning(f"momentumscan POST failed for {s}: {e}")
+                failed.append(s)
                 results.append({"symbol": s, "signal":"error","error":str(e)})
 
-        return {"status": "success", "scan_type": "momentum", "results": results}
+        return {"status": "success", "scan_type": "momentum", "results": results, "failed_symbols": failed}
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -600,12 +601,11 @@ def strategyscan_post(req: StrategyScanRequest):
         days = req.days or 300
         exchange = req.exchange or "NSE"
 
-        # Ensure enough lookback for weekly strategies (e.g., SMA200/W)
         if interval == "ONE_WEEK":
             if not days or days < 1500:
                 days = 1500
 
-        results = []
+        results, failed = [], []
         for s in syms:
             try:
                 data = _fetch_candles_with_retry(s, exchange, days, interval)
@@ -614,9 +614,10 @@ def strategyscan_post(req: StrategyScanRequest):
                 results.append({"symbol": s, "strategy": strategy_key, "result": out})
             except Exception as e:
                 log.warning(f"strategyscan POST failed for {s}: {e}")
+                failed.append(s)
                 results.append({"symbol": s, "strategy": strategy_key, "result": {"signal":"error","error":str(e)}})
 
-        return {"status": "success", "results": results}
+        return {"status": "success", "results": results, "failed_symbols": failed}
     except HTTPException as e:
         raise e
     except Exception as e:
