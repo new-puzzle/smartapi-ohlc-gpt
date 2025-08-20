@@ -2,6 +2,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from SmartApi import SmartConnect
+from pydantic import BaseModel
+from typing import List, Optional
+
 import os, requests, json
 from datetime import datetime, timedelta
 import pyotp
@@ -39,6 +42,23 @@ INSTRUMENT_LIST_PATH = "/tmp/instrument_list.json"
 IST_OPEN  = "09:15"
 IST_CLOSE = "15:30"
 DEFAULT_DAYS = 730  # ~2 years (~500 sessions)
+
+# ----------------- Request Models (POST bodies) -----------------
+class MomentumScanRequest(BaseModel):
+    symbols: List[str]
+    exchange: Optional[str] = "NSE"
+    days: Optional[int] = 300
+    interval: Optional[str] = "ONE_DAY"         # "ONE_DAY" | "ONE_WEEK"
+    near_high_pct: Optional[float] = 0.95       # near 52w high threshold
+    rsi_min: Optional[float] = 60.0             # minimum RSI
+    vol_mult: Optional[float] = 1.2             # vol > vol_ma20 * vol_mult
+
+class StrategyScanRequest(BaseModel):
+    symbols: List[str]
+    strategy: str                                # e.g., "macd_rsi_swing"
+    exchange: Optional[str] = "NSE"
+    days: Optional[int] = 300
+    interval: Optional[str] = "ONE_DAY"         # "ONE_DAY" | "ONE_WEEK"
 
 # ----------------- Utilities -----------------
 def _require_creds():
@@ -84,8 +104,6 @@ def get_token_from_symbol(symbol: str, exchange: str = "NSE") -> str:
 def _aggregate_daily_to_weekly(candles):
     if not candles:
         return []
-    # lazy import (daily path avoids this at cold start)
-    import pandas as pd
     df = pd.DataFrame(candles, columns=['timestamp','open','high','low','close','volume'])
     for col in ['open','high','low','close','volume']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -118,7 +136,7 @@ def _fetch_candles(stock_symbol: str, exchange: str, days: int, interval: str):
     span = days if (days and days > 0) else DEFAULT_DAYS
     from_dt = to_dt - timedelta(days=span)
 
-    # Always fetch daily; aggregate if weekly requested (SmartAPI weekly can be flaky)
+    # Fetch daily from SmartAPI; aggregate to weekly if needed (SmartAPI weekly can be flaky)
     params = {
         "exchange": exchange,
         "symboltoken": token,
@@ -164,7 +182,7 @@ def _rsi(close, n=14):
     return 100 - (100 / (1 + rs))
 
 def _macd(close, fast=12, slow=26, signal=9):
-    macd_line = _ema(close, fast) - _ema(close, slow)
+    macd_line = _ema(close, fast)) - _ema(close, slow)
     signal_line = _ema(macd_line, signal)
     hist = macd_line - signal_line
     return macd_line, signal_line, hist
@@ -207,10 +225,14 @@ def _with_indicators(df):
     return out
 
 # ----------------- Momentum helper (daily vs weekly aware) -----------------
-def _momentum_signal_from_df(df, interval: str):
+def _momentum_signal_from_df(df, interval: str,
+                             near_high_pct: float = 0.95,
+                             rsi_min: float = 60.0,
+                             vol_mult: float = 1.2):
     """
     Weekly uses 52 weeks; Daily uses 250 sessions.
     Volume filter uses 20-period avg in the same timeframe.
+    Thresholds are tunable via args.
     """
     if interval == "ONE_WEEK":
         min_n = 52
@@ -229,10 +251,10 @@ def _momentum_signal_from_df(df, interval: str):
     rsi = _rsi(df['close']).iloc[-1]
 
     vol_ma_val = df['volume'].rolling(vol_ma).mean().iloc[-1]
-    vol_strong = (pd.notna(vol_ma_val) and df['volume'].iloc[-1] > (vol_ma_val * 1.2))
-    near = (close >= hi * 0.95)
+    vol_strong = (pd.notna(vol_ma_val) and df['volume'].iloc[-1] > (vol_ma_val * vol_mult))
+    near = (close >= hi * near_high_pct)
 
-    sig = "buy" if (near and pd.notna(rsi) and (rsi > 60) and vol_strong) else "none"
+    sig = "buy" if (near and pd.notna(rsi) and (rsi > rsi_min) and vol_strong) else "none"
     return {
         "signal": sig,
         "near_52w_high": bool(near),
@@ -266,7 +288,7 @@ def strat_pullback_ma(df):
     c = df['close'].iloc[-1]; sma50 = df['sma50'].iloc[-1]; sma200 = df['sma200'].iloc[-1]
     if pd.isna(sma50) or pd.isna(sma200): return {"signal":"not_enough_data"}
     cond_trend = c > sma200
-    near50 = abs(c - sma50) / sma50 <= 0.05 if sma50 else False
+    near50 = abs(c - sma50) / sma50 <= 0.05 if pd.notna(sma50) else False
     bounce = c > df['close'].iloc[-2]
     sig = "buy" if (cond_trend and near50 and bounce) else "none"
     return {"signal": sig, "close": float(c), "sma50": float(sma50), "sma200": float(sma200)}
@@ -276,22 +298,13 @@ def strat_macd_rsi_swing(df):
     macd_val = float(df['macd'].iloc[-1])
     macd_sig = float(df['macd_signal'].iloc[-1])
     rsi_val  = float(df['rsi14'].iloc[-1])
-
     if macd_val > macd_sig and rsi_val > 50:
         sig = "buy"
     elif macd_val < macd_sig and rsi_val < 50:
         sig = "sell"
     else:
         sig = "none"
-
-    return {
-        "signal": sig,
-        "metrics": {
-            "macd": macd_val,
-            "macd_signal": macd_sig,
-            "rsi": rsi_val
-        }
-    }
+    return {"signal": sig, "metrics": {"macd": macd_val, "macd_signal": macd_sig, "rsi": rsi_val}}
 
 def strat_bb_squeeze_breakout(df):
     df = _with_indicators(df)
@@ -332,7 +345,7 @@ STRATEGY_FUNCS = {
     "inside_bar_breakout": strat_inside_bar_breakout,
 }
 
-# ----------------- Endpoints -----------------
+# ----------------- Endpoints (GET) -----------------
 @app.get("/api/health")
 def health():
     return {"ok": True}
@@ -362,8 +375,8 @@ def strategyscan_endpoint(symbols: str,
       /api/strategyscan?symbols=SBIN,RELIANCE&strategy=golden_cross
       NOTE: For golden_cross you should have >=250 days.
     """
-    strategy = strategy.strip().lower()
-    if strategy not in STRATEGY_FUNCS:
+    strategy_key = strategy.strip().lower()
+    if strategy_key not in STRATEGY_FUNCS:
         raise HTTPException(status_code=400, detail=f"Strategy '{strategy}' not supported.")
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     if not syms:
@@ -374,11 +387,11 @@ def strategyscan_endpoint(symbols: str,
         try:
             data = _fetch_candles(s, exchange, days, interval)
             df = _to_df(data)
-            out = STRATEGY_FUNCS[strategy](df)
-            results.append({"symbol": s, "strategy": strategy, "result": out})
+            out = STRATEGY_FUNCS[strategy_key](df)
+            results.append({"symbol": s, "strategy": strategy_key, "result": out})
         except Exception as e:
             log.warning(f"strategyscan failed for {s}: {e}")
-            results.append({"symbol": s, "strategy": strategy, "result": {"signal":"error","error":str(e)}})
+            results.append({"symbol": s, "strategy": strategy_key, "result": {"signal":"error","error":str(e)}})
 
     return {"status": "success", "results": results}
 
@@ -386,9 +399,12 @@ def strategyscan_endpoint(symbols: str,
 def momentumscan_endpoint(symbols: str,
                           exchange: str = "NSE",
                           days: int = 300,
-                          interval: str = "ONE_DAY"):
+                          interval: str = "ONE_DAY",
+                          near_high_pct: float = 0.95,
+                          rsi_min: float = 60.0,
+                          vol_mult: float = 1.2):
     """
-    Weekly-aware momentum scan:
+    Weekly-aware momentum scan with tunable thresholds:
     - ONE_DAY: last ~250 sessions baseline
     - ONE_WEEK: last ~52 weeks baseline (auto-widen lookback if needed)
     """
@@ -397,7 +413,6 @@ def momentumscan_endpoint(symbols: str,
         if not syms:
             raise HTTPException(status_code=400, detail="No symbols provided.")
 
-        # Ensure enough lookback for weekly mode
         if interval == "ONE_WEEK":
             min_days_for_weekly_momo = 1100  # ~3 years to safely get 52 finished weeks
             if not days or days < min_days_for_weekly_momo:
@@ -408,7 +423,7 @@ def momentumscan_endpoint(symbols: str,
             try:
                 data = _fetch_candles(s, exchange, days, interval)
                 df = _to_df(data)
-                res = _momentum_signal_from_df(df, interval)
+                res = _momentum_signal_from_df(df, interval, near_high_pct, rsi_min, vol_mult)
                 results.append({"symbol": s, **res})
             except Exception as e:
                 log.warning(f"momentumscan failed for {s}: {e}")
@@ -431,7 +446,6 @@ def swingsetup_endpoint(stock_symbol: str,
     Weekly needs a longer lookback (~1500 days) to warm up SMA200/W.
     """
     try:
-        # Ensure enough history for WEEKLY (SMA200 weekly needs ~200 weeks)
         if interval == "ONE_WEEK":
             min_days_for_weekly = 1500  # ~4 years to be safe
             if not days or days < min_days_for_weekly:
@@ -491,4 +505,85 @@ def swingsetup_endpoint(stock_symbol: str,
         raise e
     except Exception as e:
         log.exception("Unexpected error in swingsetup")
+        raise HTTPException(status_code=500, detail=f"Server error: {e}")
+
+# ----------------- Endpoints (POST with JSON bodies) -----------------
+@app.post("/api/momentumscan")
+def momentumscan_post(req: MomentumScanRequest):
+    """
+    JSON body version for large baskets (e.g., Nifty50, Midcap50).
+    Accepts tunable thresholds; defaults match GET behavior.
+    """
+    try:
+        syms = [s.strip().upper() for s in (req.symbols or []) if s.strip()]
+        if not syms:
+            raise HTTPException(status_code=400, detail="No symbols provided.")
+
+        interval = req.interval or "ONE_DAY"
+        days = req.days or 300
+        exchange = req.exchange or "NSE"
+
+        # Ensure enough lookback for weekly mode
+        if interval == "ONE_WEEK":
+            min_days_for_weekly_momo = 1100
+            if not days or days < min_days_for_weekly_momo:
+                days = min_days_for_weekly_momo
+
+        results = []
+        for s in syms:
+            try:
+                data = _fetch_candles(s, exchange, days, interval)
+                df = _to_df(data)
+                res = _momentum_signal_from_df(
+                    df, interval,
+                    req.near_high_pct if req.near_high_pct is not None else 0.95,
+                    req.rsi_min if req.rsi_min is not None else 60.0,
+                    req.vol_mult if req.vol_mult is not None else 1.2
+                )
+                results.append({"symbol": s, **res})
+            except Exception as e:
+                log.warning(f"momentumscan POST failed for {s}: {e}")
+                results.append({"symbol": s, "signal":"error","error":str(e)})
+
+        return {"status": "success", "scan_type": "momentum", "results": results}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        log.exception("Unexpected error in momentumscan POST")
+        raise HTTPException(status_code=500, detail=f"Server error: {e}")
+
+@app.post("/api/strategyscan")
+def strategyscan_post(req: StrategyScanRequest):
+    """
+    JSON body version for large baskets.
+    """
+    try:
+        strategy_key = (req.strategy or "").strip().lower()
+        if strategy_key not in STRATEGY_FUNCS:
+            raise HTTPException(status_code=400, detail=f"Strategy '{req.strategy}' not supported.")
+
+        syms = [s.strip().upper() for s in (req.symbols or []) if s.strip()]
+        if not syms:
+            raise HTTPException(status_code=400, detail="No symbols provided.")
+
+        interval = req.interval or "ONE_DAY"
+        days = req.days or 300
+        exchange = req.exchange or "NSE"
+
+        results = []
+        for s in syms:
+            try:
+                data = _fetch_candles(s, exchange, days, interval)
+                df = _to_df(data)
+                out = STRATEGY_FUNCS[strategy_key](df)
+                results.append({"symbol": s, "strategy": strategy_key, "result": out})
+            except Exception as e:
+                log.warning(f"strategyscan POST failed for {s}: {e}")
+                results.append({"symbol": s, "strategy": strategy_key, "result": {"signal":"error","error":str(e)}})
+
+        return {"status": "success", "results": results}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        log.exception("Unexpected error in strategyscan POST")
         raise HTTPException(status_code=500, detail=f"Server error: {e}")
