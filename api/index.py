@@ -5,7 +5,7 @@ from SmartApi import SmartConnect
 from pydantic import BaseModel
 from typing import List, Optional
 
-import os, requests, json
+import os, requests, json, time
 from datetime import datetime, timedelta
 import pyotp
 import pandas as pd
@@ -161,6 +161,31 @@ def _fetch_candles(stock_symbol: str, exchange: str, days: int, interval: str):
     if interval == "ONE_WEEK":
         data = _aggregate_daily_to_weekly(data)
     return data
+
+# --------- Safe transient retry wrapper (max 3 attempts total) ----------
+def _fetch_candles_with_retry(stock_symbol: str, exchange: str, days: int, interval: str,
+                              retries: int = 2, base_delay: float = 0.6):
+    """
+    Retries ONLY for transient SmartAPI errors such as:
+      - "Something Went Wrong, Please Try After Sometime"
+      - Rate/timeout/temporary wording
+    """
+    for attempt in range(retries + 1):
+        try:
+            return _fetch_candles(stock_symbol, exchange, days, interval)
+        except HTTPException as e:
+            msg = str(e.detail)
+            is_transient = (
+                "Something Went Wrong" in msg or
+                "Please Try After Sometime" in msg or
+                "rate" in msg.lower() or
+                "temporar" in msg.lower() or
+                "timeout" in msg.lower()
+            )
+            if attempt < retries and is_transient:
+                time.sleep(base_delay * (attempt + 1))  # 0.6s, 1.2s, ...
+                continue
+            raise
 
 # ----------------- Indicators & TA helpers -----------------
 def _to_df(data):
@@ -356,7 +381,7 @@ def get_ohlc_endpoint(stock_symbol: str,
                       days: int = DEFAULT_DAYS,
                       interval: str = "ONE_DAY"):
     try:
-        data = _fetch_candles(stock_symbol, exchange, days, interval)
+        data = _fetch_candles_with_retry(stock_symbol, exchange, days, interval)
         return {"status": "success", "symbol": stock_symbol.upper(), "interval": interval, "data": data}
     except HTTPException as e:
         raise e
@@ -373,7 +398,7 @@ def strategyscan_endpoint(symbols: str,
     """
     Example:
       /api/strategyscan?symbols=SBIN,RELIANCE&strategy=golden_cross
-      NOTE: For golden_cross you should have >=250 days.
+      NOTE: For golden_cross you should have >=250 days (daily) or ~200 bars (weekly).
     """
     strategy_key = strategy.strip().lower()
     if strategy_key not in STRATEGY_FUNCS:
@@ -382,10 +407,15 @@ def strategyscan_endpoint(symbols: str,
     if not syms:
         raise HTTPException(status_code=400, detail="No symbols provided.")
 
+    # Ensure enough lookback in weekly mode to warm up indicators (e.g., SMA200/W)
+    if interval == "ONE_WEEK":
+        if not days or days < 1500:
+            days = 1500
+
     results = []
     for s in syms:
         try:
-            data = _fetch_candles(s, exchange, days, interval)
+            data = _fetch_candles_with_retry(s, exchange, days, interval)
             df = _to_df(data)
             out = STRATEGY_FUNCS[strategy_key](df)
             results.append({"symbol": s, "strategy": strategy_key, "result": out})
@@ -421,7 +451,7 @@ def momentumscan_endpoint(symbols: str,
         results = []
         for s in syms:
             try:
-                data = _fetch_candles(s, exchange, days, interval)
+                data = _fetch_candles_with_retry(s, exchange, days, interval)
                 df = _to_df(data)
                 res = _momentum_signal_from_df(df, interval, near_high_pct, rsi_min, vol_mult)
                 results.append({"symbol": s, **res})
@@ -451,7 +481,7 @@ def swingsetup_endpoint(stock_symbol: str,
             if not days or days < min_days_for_weekly:
                 days = min_days_for_weekly
 
-        data = _fetch_candles(stock_symbol, exchange, days, interval)
+        data = _fetch_candles_with_retry(stock_symbol, exchange, days, interval)
         df = _with_indicators(_to_df(data))
 
         needed = ['sma20','sma50','sma200','rsi14','macd','macd_signal']
@@ -532,7 +562,7 @@ def momentumscan_post(req: MomentumScanRequest):
         results = []
         for s in syms:
             try:
-                data = _fetch_candles(s, exchange, days, interval)
+                data = _fetch_candles_with_retry(s, exchange, days, interval)
                 df = _to_df(data)
                 res = _momentum_signal_from_df(
                     df, interval,
@@ -570,10 +600,15 @@ def strategyscan_post(req: StrategyScanRequest):
         days = req.days or 300
         exchange = req.exchange or "NSE"
 
+        # Ensure enough lookback for weekly strategies (e.g., SMA200/W)
+        if interval == "ONE_WEEK":
+            if not days or days < 1500:
+                days = 1500
+
         results = []
         for s in syms:
             try:
-                data = _fetch_candles(s, exchange, days, interval)
+                data = _fetch_candles_with_retry(s, exchange, days, interval)
                 df = _to_df(data)
                 out = STRATEGY_FUNCS[strategy_key](df)
                 results.append({"symbol": s, "strategy": strategy_key, "result": out})
