@@ -86,19 +86,53 @@ def get_instrument_list():
         log.error(f"Instrument list download failed: {e}")
         raise HTTPException(status_code=503, detail=f"Could not download instrument list: {e}")
 
+def _normalize_variants(raw: str) -> List[str]:
+    s = (raw or "").strip().upper()
+    # basic cleanups
+    base = s.replace(" ", "").replace(".", "")
+    variants = {base}
+    # ampersand variants (e.g., M&M)
+    if "&" in base:
+        variants.add(base.replace("&", "%26"))
+    if "%26" in base:
+        variants.add(base.replace("%26", "&"))
+    return list(variants)
+
 def get_token_from_symbol(symbol: str, exchange: str = "NSE") -> str:
     inst = get_instrument_list()
-    s = symbol.upper()
-    if exchange == "NSE":
-        search = f"{s}-EQ"
+    variants = _normalize_variants(symbol)
+
+    # Helper: exact match against scrip master row
+    def match_row(it, sym_no_suffix: str) -> bool:
+        if exchange == "NSE":
+            want = f"{sym_no_suffix}-EQ"
+            return (it.get("exch_seg") == "NSE" and str(it.get("symbol", "")).upper() == want)
+        elif exchange == "BSE":
+            return (it.get("exch_seg") == "BSE" and str(it.get("symbol", "")).upper() == sym_no_suffix)
+        return False
+
+    # 1) Try exact symbol matches for all variants
+    for v in variants:
         for it in inst:
-            if it.get("symbol") == search and it.get("exch_seg") == "NSE":
+            if match_row(it, v):
                 return it.get("token")
-    elif exchange == "BSE":
+
+    # 2) Try lenient contains-based search on `symbol` (caution, but helpful for special chars)
+    for v in variants:
+        needle = (f"{v}-EQ" if exchange == "NSE" else v)
         for it in inst:
-            if it.get("symbol") == s and it.get("exch_seg") == "BSE":
+            sym = str(it.get("symbol", "")).upper()
+            if it.get("exch_seg") == exchange and needle in sym:
                 return it.get("token")
-    log.error(f"Symbol '{symbol}' not found on {exchange}")
+
+    # 3) Try `name` based match if present (some dumps include a `name` field)
+    for v in variants:
+        for it in inst:
+            nm = str(it.get("name", "")).upper()
+            if it.get("exch_seg") == exchange and (nm == v or v in nm):
+                return it.get("token")
+
+    # Not found
     raise HTTPException(status_code=404, detail=f"Symbol '{symbol}' not found on exchange '{exchange}'.")
 
 def _aggregate_daily_to_weekly(candles):
