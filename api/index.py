@@ -182,7 +182,7 @@ def _rsi(close, n=14):
     return 100 - (100 / (1 + rs))
 
 def _macd(close, fast=12, slow=26, signal=9):
-    macd_line = _ema(close, fast)) - _ema(close, slow)
+    macd_line = _ema(close, fast) - _ema(close, slow)
     signal_line = _ema(macd_line, signal)
     hist = macd_line - signal_line
     return macd_line, signal_line, hist
